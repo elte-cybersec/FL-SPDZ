@@ -19,7 +19,7 @@ sys.path.append('/home/aya/.venv/MP-SPDZ')          # parent of ExternalIO
 from ExternalIO.client import *
 from Compiler.types import regint, sfix
 
-client_id = 3    # Change for each client (0, 1, ...)
+client_id = 2    # Change for each client (0, 1, ...)
 num_parties = 2   # Total number of parties in the MPC run
 scale = 1 << 16   # Scale factor for fixed-point representation
 chunk = 10000
