@@ -1,0 +1,57 @@
+from Compiler.types import cfix, regint, Array
+import pickle
+import math
+
+cfix.set_precision(16)
+port = 5100
+client_num = 3
+
+with open("Player-Data/layer_shapes_ppo.pkl", "rb") as f:
+    layer_shapes = pickle.load(f)
+
+size = sum(int(math.prod(shp)) for shp in layer_shapes)
+
+chunk = 10000
+batches = size // chunk
+rest = size % chunk
+connections = []
+total_count = cfix(0)
+aggregated_weights = Array(size, cfix)
+
+listen_for_clients(port)
+print_ln("Listening on port %s", port)
+
+for cid in range(client_num):
+    socket = accept_client_connection(port)
+    connections.append(socket)
+    print_ln("Client %s connected", cid + 1)
+
+    count = cfix.read_from_socket(regint(socket), 1)
+    total_count += count[0]
+
+    for b in range(batches):
+        chunk_data = Array(chunk, cfix)
+        chunk_data[:] = cfix.read_from_socket(regint(socket), chunk)
+
+        @for_range(chunk)
+        def _(j):
+            aggregated_weights[b * chunk + j] += chunk_data[j] * count[0]
+
+    if rest > 0:
+        rest_data = Array(rest, cfix)
+        rest_data[:] = cfix.read_from_socket(regint(socket), rest)
+
+        @for_range(rest)
+        def _(j):
+            aggregated_weights[batches * chunk + j] += rest_data[j] * count[0]
+
+print_ln("Processed %s chunks from client %s", batches, cid + 1)
+
+@for_range(size)
+def _(i):
+    aggregated_weights[i] = aggregated_weights[i] / total_count
+
+for cid in range(client_num):
+    socket = connections[cid]
+    cfix.write_to_socket(socket, aggregated_weights)
+    print_ln("Sent aggregated weights to client %s", cid + 1)
