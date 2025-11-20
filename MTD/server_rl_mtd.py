@@ -11,7 +11,7 @@ sys.path.append('/home/ubuntu/FL-SPDZ/.venv/MP-SPDZ')
 from Programs.Source.spdz_strategy import FedMPCStrategy
 
 # Configure the server for training
-config = ServerConfig(num_rounds=5)
+config = ServerConfig(num_rounds=5, round_timeout=None)
 
 def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     print("the metrics are: ", metrics)
@@ -46,13 +46,13 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 
 # === Server Main ===
 def main():
-    program_map = {
-        "PPO": "fedavg_ppo",
-        "A2C": "fedavg_a2c",
-        "Envelope": "fedavg_envelope",
-        "EUPG": "fedavg_eupg",
-    }
-    program = program_map.get("PPO", "fedavg_ppo")
+    program_list = [
+        "fedavg_ppo",
+        "fedavg_a2c",
+        "fedavg_envelope",
+        "fedavg_eupg"
+    ]
+    program = "fedavg_envelope"
     
     strategy = FedMPCStrategy(
         num_parties=2,
@@ -64,7 +64,7 @@ def main():
         min_available_clients=3,
         evaluate_metrics_aggregation_fn=weighted_average,
     )
-    config = ServerConfig(num_rounds=5)
+    config = ServerConfig(num_rounds=5, round_timeout=None)
 
     start_server(
         server_address="0.0.0.0:5006",

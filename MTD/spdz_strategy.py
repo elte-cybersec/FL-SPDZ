@@ -3,6 +3,7 @@ import os
 import subprocess
 from logging import INFO
 from flwr.server.strategy import FedAvg
+import numpy as np
 
 
 from flwr.server.client_proxy import ClientProxy
@@ -51,7 +52,7 @@ class FedMPCStrategy(FedAvg):
         Returns:
             Tuple[FitIns, Dict[str, Scalar]]: The fit input and additional metadata."""
         
-        # Launch the SPDZ party 0
+        # # Launch the SPDZ party 0
         launch_party(self.NUM_PARTIES, 0, self.PROGRAM)
 
         # Call the usual FedAvg configuration
@@ -64,20 +65,24 @@ class FedMPCStrategy(FedAvg):
         results: List[Tuple[str, FitRes]],
         failures: List[BaseException],
     ) -> Optional[Tuple[Parameters, Dict[str, Metrics]]]:
-
         # --- run the usual FedAvg aggregation --------------------------
         agg = super().aggregate_fit(rnd, results, failures)
         if agg is None:
+            # No aggregated parameters due to client failures
             return None
 
         parameters, metrics = agg
+        if parameters is None:
+            # Propagate metrics without preview if parameters are missing
+            return agg
 
         # --- flatten and show the first 10 numbers ---------------------
-        ndarrays = parameters_to_ndarrays(parameters)
-        flat     = np.concatenate([w.flatten() for w in ndarrays])
-
-        print(f"[Round {rnd}] First 10 values of aggregated model:",
-              flat[:10])
+        try:
+            ndarrays = parameters_to_ndarrays(parameters)
+            flat     = np.concatenate([w.flatten() for w in ndarrays])
+            print(f"[Round {rnd}] First 10 values of aggregated model:", flat[:10])
+        except Exception as e:
+            print(f"[Round {rnd}] Unable to preview aggregated model: {e}")
 
         return parameters, metrics
 

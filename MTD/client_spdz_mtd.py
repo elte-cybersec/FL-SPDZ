@@ -97,7 +97,6 @@ class FlowerACClient(FlwrClient):
             parameters=ndarrays_to_parameters(parameters_list),
         )
 
-
     def set_parameters(self, parameters):
         if self.rl_algo in ["PPO", "A2C", "MaskablePPO"]:
             # Convert the list of NumPy arrays back to a dictionary of tensors
@@ -176,7 +175,7 @@ class FlowerACClient(FlwrClient):
 
         # Train the PPO agent locally
         #       Create the callback: check every 10000 steps
-        training_size = 100  # Number of timesteps used in training (can be modified)
+        training_size = 200  # Number of timesteps used in training (can be modified)
         client_id = self.partition_id
         print("training in ROUND NUMBER ", round_number, "at ",self.rl_algo," with round length equal to", training_size, "timesteps")
         if training_size > 0:
@@ -199,8 +198,11 @@ class FlowerACClient(FlwrClient):
                 eupg_model_save(self.model, log_dir, model_name)
             elif self.rl_algo == "Envelope":
                 self.model.env = self.train_env
+                print("Starting Envelope training...")
                 self.model.train(total_timesteps=training_size, eval_freq=1000)
+                print("Ended Envelope training and starting to save model...")
                 self.model.save(save_dir=log_dir, filename=model_name, save_replay_buffer=True)
+                print("Ended saving the model.")
         
         print("CLIENT ", client_id, " finished training for ", training_size, " timesteps!!!")
         updated_parameters = parameters_to_ndarrays(self.get_parameters(ins).parameters)
@@ -268,11 +270,11 @@ class FlowerACClient(FlwrClient):
         # print("the parameters in the evaluation is ", policy_weights_list)
 
         # Set parameters received from the server
-        self.set_parameters(ins.parameters)
+        self.set_parameters(parameters_to_ndarrays(ins.parameters))
 
         # Evaluate the model
         episode_rewards = []
-        n_steps = 2160
+        n_steps = 1000
         step = 0
         if n_steps == 0:
             return float(0), 1, {"avg_reward": float(0)}
@@ -329,7 +331,7 @@ class FlowerACClient(FlwrClient):
             mean_reward = sum(episode_rewards) / len(episode_rewards)
             return EvaluateRes(
                 status=Status(code=Code.OK, message="Success"),
-                loss=None, # float(mean_reward)
+                loss= float(mean_reward) * -1, # float(mean_reward)
                 num_examples=n_steps,
                 metrics={"avg_reward": float(mean_reward)},
             )
@@ -340,7 +342,7 @@ def construct_flower_client(partition_id):
     # Create environments
     log_dir = "./monitor_logs/client" + str(partition_id) + "/" + str(round_number) + "/callback_logs/"  # Directory to save logs (can be modified)
     budget_reset = "daily"
-    rl_algo = "PPO"
+    rl_algo = "Envelope"
     model, train_env, eval_env = initialize_model_for_flwr(rl_algo, log_dir, budget_reset)
     log(INFO, f"MDP and {rl_algo} models initialized for client {partition_id}")
 

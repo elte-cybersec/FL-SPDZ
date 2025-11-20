@@ -4,7 +4,7 @@ import subprocess, time, sys, os, signal
 
 NUM_PARTIES  = 2          # total parties in the MPC run
 PARTY_ID     = 1          # this launcher is party 1
-PROGRAM      = "fedavg_ppo"   # byte‑code name (no .mpc/.bc)
+PROGRAM      = "fedavg_envelope"   # byte‑code name (no .mpc/.bc)
 EXECUTABLE   = "./semi2k-party.x" # or mascot-party.x, etc.
 RESTART_DELAY = 2         # seconds between restarts; set 0 to disable auto‑restart
 
