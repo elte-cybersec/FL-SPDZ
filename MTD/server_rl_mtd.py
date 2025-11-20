@@ -46,25 +46,40 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 
 # === Server Main ===
 def main():
-    program_list = [
-        "fedavg_ppo",
-        "fedavg_a2c",
-        "fedavg_envelope",
-        "fedavg_eupg"
-    ]
-    program = "fedavg_envelope"
-    
-    strategy = FedMPCStrategy(
-        num_parties=2,
-        program= program,
-        fraction_fit=0.6,
-        fraction_evaluate=0.5,
-        min_fit_clients=3,
-        min_evaluate_clients=2,
-        min_available_clients=3,
-        evaluate_metrics_aggregation_fn=weighted_average,
-    )
-    config = ServerConfig(num_rounds=5, round_timeout=None)
+    if len(sys.argv) < 2:
+        print("Usage: python server_rl_mtd.py <use_spdz>")
+        sys.exit(1)
+    use_spdz = bool(int(sys.argv[1]))
+
+    if use_spdz is True:
+        program_list = [
+            "fedavg_ppo",
+            "fedavg_a2c",
+            "fedavg_envelope",
+            "fedavg_eupg"
+        ]
+        program = "fedavg_envelope"
+        
+        strategy = FedMPCStrategy(
+            num_parties=2,
+            program= program,
+            fraction_fit=0.6,
+            fraction_evaluate=0.5,
+            min_fit_clients=3,
+            min_evaluate_clients=2,
+            min_available_clients=3,
+            evaluate_metrics_aggregation_fn=weighted_average,
+        )
+    else:
+        strategy = FedAvg(
+            fraction_fit=0.6,
+            fraction_evaluate=0.5,
+            min_fit_clients=3,
+            min_evaluate_clients=2,
+            min_available_clients=3,
+            evaluate_metrics_aggregation_fn=weighted_average,
+        )
+    config = ServerConfig(num_rounds=10, round_timeout=None)
 
     start_server(
         server_address="0.0.0.0:5006",

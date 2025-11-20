@@ -61,7 +61,7 @@ def unflatten_with_shapes(flat_array: np.ndarray, path: str = "Player-Data/layer
 
 
 class FlowerACClient(FlwrClient):
-    def __init__(self, partition_id, rl_algo, model, train_env, eval_env):
+    def __init__(self, partition_id, rl_algo, model, train_env, eval_env, use_spdz=True):
         """
         Args:
             model: Stable-Baselines3 PPO model.
@@ -76,6 +76,7 @@ class FlowerACClient(FlwrClient):
         self.eval_env = eval_env
         self.spdz_update = None  # Placeholder for SPDZ update
         self.shares = []
+        self.use_spdz = use_spdz
 
     def get_parameters(self, ins: GetParametersIns) -> GetParametersRes:
         if self.rl_algo in ["PPO", "A2C", "MaskablePPO"]:
@@ -164,7 +165,7 @@ class FlowerACClient(FlwrClient):
         log(INFO, "Training model")
         # 1) update local model with global weights
         # global_weights = parameters_to_ndarrays(ins.parameters)
-        if self.spdz_update is None:
+        if self.use_spdz is False or self.spdz_update is None:
             global_weights = parameters_to_ndarrays(ins.parameters)
         else:
             print("----USING SPDZ------")
@@ -211,6 +212,18 @@ class FlowerACClient(FlwrClient):
         layer_shapes_path = "Player-Data/layer_shapes_" + str(self.rl_algo).lower() + ".pkl"
         if client_id == 0:
             save_layer_shapes(updated_parameters, layer_shapes_path)
+
+        if self.use_spdz is False:
+            # If not using SPDZ, return the updated parameters directly
+            log(INFO, "One training round done successfully without SPDZ.")
+
+            return FitRes(
+                status=Status(code=Code.OK, message="Success"),
+                # Client sends the updated model parameters to server for evaluation
+                parameters=ndarrays_to_parameters(updated_parameters),
+                num_examples=training_size,
+                metrics={},
+            )
 
         # 3) flatten and split weights into shares
         flat_weights = np.concatenate([w.flatten() for w in updated_parameters])
@@ -274,7 +287,7 @@ class FlowerACClient(FlwrClient):
 
         # Evaluate the model
         episode_rewards = []
-        n_steps = 1000
+        n_steps = 100
         step = 0
         if n_steps == 0:
             return float(0), 1, {"avg_reward": float(0)}
@@ -337,7 +350,7 @@ class FlowerACClient(FlwrClient):
             )
 
 
-def construct_flower_client(partition_id):
+def construct_flower_client(partition_id, use_spdz=True) -> FlwrClient:
     print("construction in ROUND NUMBER ", round_number)
     # Create environments
     log_dir = "./monitor_logs/client" + str(partition_id) + "/" + str(round_number) + "/callback_logs/"  # Directory to save logs (can be modified)
@@ -347,24 +360,25 @@ def construct_flower_client(partition_id):
     log(INFO, f"MDP and {rl_algo} models initialized for client {partition_id}")
 
     # Create and start Flower client
-    flower_client = FlowerACClient(partition_id, rl_algo, model, train_env, eval_env)
+    flower_client = FlowerACClient(partition_id, rl_algo, model, train_env, eval_env ,use_spdz=use_spdz)
     # start_numpy_client(server_address="localhost:8080", client=flower_client)
     # flower_client.set_context(context)
     return flower_client.to_client()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python client_spdz_mtd.py <client_id>")
+    if len(sys.argv) < 3:
+        print("Usage: python client_spdz_mtd.py <client_id> <use_spdz>")
         sys.exit(1)
     client_id = int(sys.argv[1])
+    use_spdz = bool(int(sys.argv[2]))
 
     """Create a Flower client representing a single organization."""
     log(INFO, f"Starting client {client_id}")
 
     # Construct the client
     flower_client = construct_flower_client(
-        partition_id=client_id
+        partition_id=client_id, use_spdz=use_spdz
     )
 
     start_client(
