@@ -58,22 +58,22 @@ Copy the following files into the corresponding MP-SPDZ directories:
 
 ### 2. Compile the `fedavg.mpc` file
 ```bash
-cd ./MP-SPDZ/Programs/Source
-./compile.py fedavg.mpc
+cd ./.venv/MP-SPDZ
+./compile.py Programs/Source/fedavg.mpc
 ```
      
 ### 3. Generate SSL keys:
-Make sure that you are inside the root `MP-SPDZ` folder before proceeding.
+Make sure that you are still inside the root `MP-SPDZ` folder before proceeding.
 
 -  *Keys for clients*:
 ```bash
-Scripts/setup-clients.sh 3
+./Scripts/setup-clients.sh 3
 ```
 
 -   *Keys for parties*:
 
 ```bash
-Scripts/setup-ssl.sh 2
+./Scripts/setup-ssl.sh 2
 ```
 
 ### 4. Compile relevant MPC protocols
