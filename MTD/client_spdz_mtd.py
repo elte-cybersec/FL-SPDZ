@@ -3,6 +3,7 @@ from pathlib import Path
 from logging import INFO
 from typing import List
 import pickle
+from datetime import datetime
 
 import sys, numpy as np
 import torch
@@ -17,7 +18,7 @@ from optsfc.envs.mo_fiveg_mdp import initialize_model_for_flwr, SaveOnBestTraini
 from optsfc.envs.morl_train import eval_agent, train_eupg, train_Envelope, eupg_model_save, rewards_coeff
 from optsfc.envs.short_simulated_testbed import is_action_possible
 
-sys.path.append('/home/ubuntu/FL-SPDZ/.venv/MP-SPDZ')          # parent of ExternalIO
+sys.path.append('/home/sous/MTDFed/FL-SPDZ/.venv/MP-SPDZ')          # parent of ExternalIO
 from ExternalIO.client import *
 
 num_parties = 2   # Total number of parties in the MPC run
@@ -176,9 +177,10 @@ class FlowerACClient(FlwrClient):
 
         # Train the PPO agent locally
         #       Create the callback: check every 10000 steps
-        training_size = 200  # Number of timesteps used in training (can be modified)
+        training_size = 2000  # Number of timesteps used in training (can be modified)
         client_id = self.partition_id
         print("training in ROUND NUMBER ", round_number, "at ",self.rl_algo," with round length equal to", training_size, "timesteps")
+        training_start_time = datetime.now()
         if training_size > 0:
             log_dir = "./monitor_logs/client" + str(client_id) + "/" + str(
                 round_number) + "/callback_logs/"  # Directory to save logs (can be modified)
@@ -204,7 +206,9 @@ class FlowerACClient(FlwrClient):
                 print("Ended Envelope training and starting to save model...")
                 self.model.save(save_dir=log_dir, filename=model_name, save_replay_buffer=True)
                 print("Ended saving the model.")
-        
+        training_end_time = datetime.now()
+        training_duration_seconds = (training_end_time - training_start_time).total_seconds()
+
         print("CLIENT ", client_id, " finished training for ", training_size, " timesteps!!!")
         updated_parameters = parameters_to_ndarrays(self.get_parameters(ins).parameters)
 
@@ -222,9 +226,10 @@ class FlowerACClient(FlwrClient):
                 # Client sends the updated model parameters to server for evaluation
                 parameters=ndarrays_to_parameters(updated_parameters),
                 num_examples=training_size,
-                metrics={},
+                metrics={"training_duration": training_duration_seconds, "training_end_epoch": training_end_time.timestamp()},
             )
 
+        spdz_start_time = datetime.now()
         # 3) flatten and split weights into shares
         flat_weights = np.concatenate([w.flatten() for w in updated_parameters])
         self.shares.clear()
@@ -262,6 +267,8 @@ class FlowerACClient(FlwrClient):
         self.spdz_update = unflatten_with_shapes(avg_weights, path=layer_shapes_path)
 
         log(INFO, "One training round done successfully.")
+        spdz_end_time = datetime.now()
+        spdz_duration_seconds = (spdz_end_time - spdz_start_time).total_seconds()
 
         # # save model
         # model_dir = "./tested_models/" + self.rl_algo + "_model_" + str(self.partition_id) + "/"
@@ -273,7 +280,7 @@ class FlowerACClient(FlwrClient):
             # Client sends the received global model as updated model parameters to server for evaluation
             parameters=ndarrays_to_parameters(self.spdz_update),
             num_examples=training_size,
-            metrics={},
+            metrics={"training_duration": training_duration_seconds, "training_end_epoch": training_end_time.timestamp()},
         )
 
 
@@ -287,7 +294,7 @@ class FlowerACClient(FlwrClient):
 
         # Evaluate the model
         episode_rewards = []
-        n_steps = 100
+        n_steps = 2160
         step = 0
         if n_steps == 0:
             return float(0), 1, {"avg_reward": float(0)}
@@ -349,13 +356,21 @@ class FlowerACClient(FlwrClient):
                 metrics={"avg_reward": float(mean_reward)},
             )
 
+ALGORITHM_MAPPING = {
+    "eupg": "EUPG",
+    "envelope": "Envelope",
+    "ppo": "PPO",
+    "a2c": "A2C",
+    "maskableppo": "MaskablePPO"
+}
 
-def construct_flower_client(partition_id, use_spdz=True) -> FlwrClient:
+def construct_flower_client(partition_id, use_spdz=True, algorithm="EUPG") -> FlwrClient:
+    rl_algo = ALGORITHM_MAPPING.get(algorithm.lower(), "EUPG")
+
     print("construction in ROUND NUMBER ", round_number)
     # Create environments
     log_dir = "./monitor_logs/client" + str(partition_id) + "/" + str(round_number) + "/callback_logs/"  # Directory to save logs (can be modified)
     budget_reset = "daily"
-    rl_algo = "Envelope"
     model, train_env, eval_env = initialize_model_for_flwr(rl_algo, log_dir, budget_reset)
     log(INFO, f"MDP and {rl_algo} models initialized for client {partition_id}")
 
@@ -367,18 +382,19 @@ def construct_flower_client(partition_id, use_spdz=True) -> FlwrClient:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python client_spdz_mtd.py <client_id> <use_spdz>")
+    if len(sys.argv) < 4:
+        print("Usage: python client_spdz_mtd.py <client_id> <use_spdz> <algorithm>")
         sys.exit(1)
     client_id = int(sys.argv[1])
     use_spdz = bool(int(sys.argv[2]))
+    algorithm = sys.argv[3]
 
     """Create a Flower client representing a single organization."""
     log(INFO, f"Starting client {client_id}")
-
+ 
     # Construct the client
     flower_client = construct_flower_client(
-        partition_id=client_id, use_spdz=use_spdz
+        partition_id=client_id, use_spdz=use_spdz, algorithm=algorithm
     )
 
     start_client(
