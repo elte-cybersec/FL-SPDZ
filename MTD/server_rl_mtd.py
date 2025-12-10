@@ -3,12 +3,17 @@ from typing import List, Tuple
 from datetime import datetime
 
 from flwr.common import Context, Metrics, Parameters, log
+from flwr.common.typing import UserConfig
 from flwr.server.strategy import FedAvg
 from flwr.server import ServerAppComponents, ServerConfig, ServerApp, start_server, Driver, LegacyContext, ClientManager
 from flwr.server.workflow import SecAggPlusWorkflow, DefaultWorkflow
 
-import sys
-sys.path.append('/home/sous/MTDFed/FL-SPDZ/.venv/MP-SPDZ')      
+import sys, os
+
+# retrieve the parent of the parent directory
+project_root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(project_root_dir)
+
 from Programs.Source.spdz_strategy import FedMPCStrategy
 
 # Configure the server for training
@@ -55,25 +60,59 @@ def weighted_average_with_time_logging(metrics: List[Tuple[int, Metrics]]) -> Me
     return agg_metrics
 
 
-# def server_fn(context: Context) -> ServerAppComponents:
-#     """Construct components that set the ServerApp behaviour.
+def get_server_strategy(run_config: UserConfig):
+    """Construct the server strategy based on the context configuration."""
+    use_spdz = run_config.get("use-spdz", True)
+    rl_algo = run_config.get("rl-algo", "eupg")
 
-#     You can use the settings in `context.run_config` to parameterize the
-#     construction of all elements (e.g the strategy or the number of rounds)
-#     wrapped in the returned ServerAppComponents object.
-#     """
-#     # Use SPDZ strategy if specified in context, otherwise use FedAvg
-#     use_spdz = context.run_config.get("use_spdz", True)
-#     rl_algo = context.run_config.get("rl_algo", "PPO")
+    program = PROGRAM_MAPPING.get(rl_algo.lower(), "fedavg_eupg")
 
-#     program = program_map.get(rl_algo, "fedavg_ppo")
+    log(INFO, f"Using {'SPDZ+MTD' if use_spdz else 'FedAvg'} strategy (program={program})")
 
-#     log(INFO, f"Using {'SPDZ+MTD' if use_spdz else 'FedAvg'} strategy (program={program})")
+    if use_spdz is True:
+        strategy = FedMPCStrategy(
+            num_parties=2,
+            program=program,
+            fraction_fit=run_config.get("fraction-fit", 0.6),
+            fraction_evaluate=run_config.get("fraction-evaluate", 0.5),
+            min_fit_clients=run_config.get("min-fit-clients", 3),
+            min_evaluate_clients=run_config.get("min-evaluate-clients", 2),
+            min_available_clients=run_config.get("min-available-clients", 3),
+            evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average_with_time_logging,
+        )
+    else:
+        strategy = FedAvg(
+            fraction_fit=run_config.get("fraction-fit", 0.6),
+            fraction_evaluate=run_config.get("fraction-evaluate", 0.5),
+            min_fit_clients=run_config.get("min-fit-clients", 3),
+            min_evaluate_clients=run_config.get("min-evaluate-clients", 2),
+            min_available_clients=run_config.get("min-available-clients", 3),
+            evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average_with_time_logging,
+        )
+    return strategy
 
-#     return ServerAppComponents(
-#         strategy=strategy,
-#         config=config
-#     )
+
+def server_fn(context: Context) -> ServerAppComponents:
+    """Construct components that set the ServerApp behaviour for `flwr run`.
+
+    This function is compatible with the newer `flwr run` API. It reads
+    `use_spdz` and `rl_algo` from `context.run_config` (when provided) and
+    falls back to defaults otherwise.
+    """
+    # Use SPDZ strategy if specified in context, otherwise use FedAvg
+    run_cfg = context.run_config
+    strategy = get_server_strategy(run_cfg)  # determine the strategy
+
+    # ServerConfig can be customized via context.run_config as well.
+    server_config = ServerConfig(num_rounds=run_cfg.get("num-server-rounds", 25), round_timeout=None)
+
+    return ServerAppComponents(strategy=strategy, config=server_config)
+
+
+# Create the ServerApp instance for `flwr run`
+app = ServerApp(server_fn=server_fn)
 
 
 # === Server Main ===
@@ -115,7 +154,7 @@ def main():
             evaluate_metrics_aggregation_fn=weighted_average,
             fit_metrics_aggregation_fn=weighted_average_with_time_logging,
         )
-    config = ServerConfig(num_rounds=25, round_timeout=None)
+    config = ServerConfig(num_rounds=3, round_timeout=None)
 
     start_server(
         server_address="0.0.0.0:5006",
@@ -131,24 +170,24 @@ if __name__ == "__main__":
 ## Comment-out the following code block ###
 ## to disable SecAgg+ Secure Aggregation ###
 
-# @app.main()
-# def main(driver: Driver, context: Context) -> None:
-#     # Construct the LegacyContext
-#     num_rounds = context.run_config["num-server-rounds"]
-#     context = LegacyContext(
-#         context=context,
-#         config=ServerConfig(num_rounds=num_rounds),
-#         strategy=strategy1,
-#     )
-#
-#     fit_workflow = SecAggPlusWorkflow(
-#         num_shares=context.run_config["num-shares"],
-#         reconstruction_threshold=context.run_config["reconstruction-threshold"],
-#         max_weight=context.run_config["max-weight"],
-#     )
-#
-#     # Create the workflow
-#     workflow = DefaultWorkflow(fit_workflow=fit_workflow)
-#
-#     # Execute
-#     workflow(driver, context)
+@app.main()
+def main(driver: Driver, context: Context) -> None:
+    # Construct the LegacyContext
+    num_rounds = context.run_config["num-server-rounds"]
+    context = LegacyContext(
+        context=context,
+        config=ServerConfig(num_rounds=num_rounds),
+        strategy=get_server_strategy(context.run_config),
+    )
+
+    fit_workflow = SecAggPlusWorkflow(
+        num_shares=context.run_config["num-shares"],
+        reconstruction_threshold=context.run_config["reconstruction-threshold"],
+        max_weight=context.run_config["max-weight"],
+    )
+
+    # Create the workflow
+    workflow = DefaultWorkflow(fit_workflow=fit_workflow)
+
+    # Execute
+    workflow(driver, context)

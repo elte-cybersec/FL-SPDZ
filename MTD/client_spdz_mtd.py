@@ -5,21 +5,25 @@ from typing import List
 import pickle
 from datetime import datetime
 
-import sys, numpy as np
+import sys, os, numpy as np
 import torch
-from flwr.client import NumPyClient, Client as FlwrClient, start_client
-# from flwr.client.mod import secaggplus_mod
+from flwr.client import NumPyClient, Client as FlwrClient, start_client, ClientApp
+from flwr.client.mod import secaggplus_mod
 from flwr.common import (
     Code, Status, FitIns, FitRes, GetParametersIns,
     GetParametersRes, EvaluateIns, EvaluateRes, log,
-    ndarrays_to_parameters, parameters_to_ndarrays,
+    ndarrays_to_parameters, parameters_to_ndarrays, Context,
 )
 from optsfc.envs.mo_fiveg_mdp import initialize_model_for_flwr, SaveOnBestTrainingRewardCallback, MOfiveG_net
 from optsfc.envs.morl_train import eval_agent, train_eupg, train_Envelope, eupg_model_save, rewards_coeff
 from optsfc.envs.short_simulated_testbed import is_action_possible
 
-sys.path.append('/home/sous/MTDFed/FL-SPDZ/.venv/MP-SPDZ')          # parent of ExternalIO
-from ExternalIO.client import *
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root_dir = os.path.dirname(current_dir)
+sys.path.append(project_root_dir)
+sys.path.append(current_dir)
+
+from ExternalIO.client import Client as SPDZClient
 
 num_parties = 2   # Total number of parties in the MPC run
 scale = 1 << 16   # Scale factor for fixed-point representation
@@ -246,19 +250,19 @@ class FlowerACClient(FlwrClient):
         # 5) Send shares to SPDZ
         party_sum = np.zeros_like(weighted_shares[0], dtype=np.int64)  # Initialize weighted sum
         for pid in range(num_parties):
-            spdz_client = Client(['localhost'], 5100 + pid, client_id)
-            print(f"[Client {client_id}] Sending shares to SPDZ party {pid}")
+            spdz_client = SPDZClient(['localhost'], 5100 + pid, client_id)
+            print(f"[SPDZClient {client_id}] Sending shares to SPDZ party {pid}")
             spdz_client.send_public_inputs([num_examples * scale])  # Send scaled count
             for i in range(batches):
                 spdz_client.send_public_inputs(weighted_shares[pid][i * chunk:(i + 1) * chunk])
-                print(f"[Client {client_id}] Sent chunk {i + 1}/{batches} to SPDZ party {pid}")
+                print(f"[SPDZClient {client_id}] Sent chunk {i + 1}/{batches} to SPDZ party {pid}")
             if rest > 0:
                 spdz_client.send_public_inputs(weighted_shares[pid][batches * chunk:])
-                print(f"[Client {client_id}] Sent remaining chunk to SPDZ party {pid}")
+                print(f"[SPDZClient {client_id}] Sent remaining chunk to SPDZ party {pid}")
 
             # 6) Receive output from SPDZ
             received = spdz_client.receive_plain_values()
-            print(f"[Client {client_id}] Received share from SPDZ party {pid}")
+            print(f"[SPDZClient {client_id}] Received share from SPDZ party {pid}")
             party_sum += np.array(received, dtype=np.int64)
 
         # 7) Average the weighted shares
@@ -379,6 +383,29 @@ def construct_flower_client(partition_id, use_spdz=True, algorithm="EUPG") -> Fl
     # start_numpy_client(server_address="localhost:8080", client=flower_client)
     # flower_client.set_context(context)
     return flower_client.to_client()
+
+
+def client_fn(context: Context) -> FlwrClient:
+    """Factory compatible with `flwr run`.
+
+    The node_id is provided by Flower via context.node_id (an integer).
+    We read use_spdz and algorithm from context.run_config.
+    """
+    partition_id = context.node_id
+    run_cfg = context.run_config
+    print("Running client with partition_id: ", partition_id)
+    
+    use_spdz = run_cfg.get("use-spdz", True)
+    algorithm = run_cfg.get("rl-algo", "eupg")
+
+    return construct_flower_client(partition_id, use_spdz=use_spdz, algorithm=algorithm)
+
+
+# Create the ClientApp instance for `flwr run`
+app = ClientApp(
+    client_fn=client_fn,
+    mods=[secaggplus_mod],
+)
 
 
 if __name__ == "__main__":

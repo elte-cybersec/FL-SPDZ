@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fl-spdz-mtd"
+version = "1.0.0"
+description = "Federated Learning with SPDZ-based secure aggregation and MTD"
+license = "Apache-2.0"
+dependencies = [
+    "flwr>=1.23.0",
+    "torch>=2.0.0",
+    "numpy>=1.26.0",
+    "optsfc",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "fl-spdz"
+
+[tool.flwr.app.components]
+serverapp = "Programs.Source.server_rl_mtd:app"
+clientapp = "ExternalIO.client_spdz_mtd:app"
+
+[tool.flwr.app.config]
+# Server configuration
+num-server-rounds = 25
+fraction-fit = 0.6
+fraction-evaluate = 0.5
+min-fit-clients = 3
+min-evaluate-clients = 2
+min-available-clients = 3
+
+# SPDZ and algorithm configuration
+use-spdz = true
+rl-algo = "eupg"  # Options: "ppo", "a2c", "envelope", "eupg"
+
+# Parameters for SecAgg+ protocol (if enabled)
+num-shares = 3
+reconstruction-threshold = 2
+max-weight = 9000
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 3
