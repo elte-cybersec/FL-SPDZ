@@ -8,12 +8,14 @@ from datetime import datetime
 import sys, os, numpy as np
 import torch
 from flwr.client import NumPyClient, Client as FlwrClient, start_client, ClientApp
-from flwr.client.mod import secaggplus_mod
+from flwr.client.mod import secaggplus_mod, LocalDpMod
 from flwr.common import (
     Code, Status, FitIns, FitRes, GetParametersIns,
     GetParametersRes, EvaluateIns, EvaluateRes, log,
-    ndarrays_to_parameters, parameters_to_ndarrays, Context,
+    ndarrays_to_parameters, parameters_to_ndarrays, Context, Message
 )
+from flwr.client.typing import ClientAppCallable
+
 from optsfc.envs.mo_fiveg_mdp import initialize_model_for_flwr, SaveOnBestTrainingRewardCallback, MOfiveG_net
 from optsfc.envs.morl_train import eval_agent, train_eupg, train_Envelope, eupg_model_save, rewards_coeff
 from optsfc.envs.short_simulated_testbed import is_action_possible
@@ -30,8 +32,12 @@ scale = 1 << 16   # Scale factor for fixed-point representation
 chunk = 10000
 round_number = 5
 
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+torch.set_num_threads(1)
 
-def save_layer_shapes(shares: List[np.ndarray], path: str = "Player-Data/layer_shapes.pkl"):
+
+def save_layer_shapes(shares: List[np.ndarray], path: str = "Player-Data/layer_shapes.pkl", client_id: int = 0):
     shapes = [s.shape for s in shares]
     print(f"[Client {client_id}] Saving layer shapes: {shapes} to {path}")
     with open(path, "wb") as f:
@@ -206,7 +212,7 @@ class FlowerACClient(FlwrClient):
             elif self.rl_algo == "Envelope":
                 self.model.env = self.train_env
                 print("Starting Envelope training...")
-                self.model.train(total_timesteps=training_size, eval_freq=1000)
+                self.model.train(total_timesteps=training_size, eval_freq=1)
                 print("Ended Envelope training and starting to save model...")
                 self.model.save(save_dir=log_dir, filename=model_name, save_replay_buffer=True)
                 print("Ended saving the model.")
@@ -219,7 +225,7 @@ class FlowerACClient(FlwrClient):
         # 2) save layer shape
         layer_shapes_path = "Player-Data/layer_shapes_" + str(self.rl_algo).lower() + ".pkl"
         if client_id == 0:
-            save_layer_shapes(updated_parameters, layer_shapes_path)
+            save_layer_shapes(updated_parameters, layer_shapes_path, client_id=client_id)
 
         if self.use_spdz is False:
             # If not using SPDZ, return the updated parameters directly
@@ -391,7 +397,7 @@ def client_fn(context: Context) -> FlwrClient:
     The node_id is provided by Flower via context.node_id (an integer).
     We read use_spdz and algorithm from context.run_config.
     """
-    partition_id = context.node_id
+    partition_id = context.node_config.get("partition-id", -1)
     run_cfg = context.run_config
     print("Running client with partition_id: ", partition_id)
     
@@ -401,10 +407,69 @@ def client_fn(context: Context) -> FlwrClient:
     return construct_flower_client(partition_id, use_spdz=use_spdz, algorithm=algorithm)
 
 
+def conditional_secaggplus_mod(
+    msg: Message,
+    ctx: Context,
+    call_next: ClientAppCallable,
+) -> Message:
+    # Read flag from run_config (pyproject.toml or --run-config)
+    use_secagg_raw = ctx.run_config.get("use-secagg", False)
+
+    # Make it robust against "true"/"false"/1/0/etc.
+    if isinstance(use_secagg_raw, str):
+        use_secagg = use_secagg_raw.lower() in {"1", "true", "yes", "on"}
+    else:
+        use_secagg = bool(use_secagg_raw)
+
+    if not use_secagg:
+        # SecAgg disabled → just bypass, behave like no mod at all
+        return call_next(msg, ctx)
+
+    # SecAgg enabled → delegate to the real SecAgg+ mod
+    return secaggplus_mod(msg, ctx, call_next)
+
+
+def conditional_dp_mod(
+    msg: Message,
+    ctx: Context,
+    call_next: ClientAppCallable,
+) -> Message:
+    # Read flag from run_config (pyproject.toml or --run-config)
+    use_dp_raw = ctx.run_config.get("use-dp", False)
+
+    # Make it robust against "true"/"false"/1/0/etc.
+    if isinstance(use_dp_raw, str):
+        use_dp = use_dp_raw.lower() in {"1", "true", "yes", "on"}
+    else:
+        use_dp = bool(use_dp_raw)
+
+    if not use_dp:
+        # DP disabled → just bypass, behave like no mod at all
+        return call_next(msg, ctx)
+
+    # DP enabled → delegate to the real DP mod
+    local_dp_obj = LocalDpMod(
+        ctx.run_config.get("dp-clip", 1.0),
+        ctx.run_config.get("dp-sens", 1.0),
+        ctx.run_config.get("dp-eps", 0.8),
+        ctx.run_config.get("dp-del", 0.05)
+    )
+
+    try:
+        return local_dp_obj(msg, ctx, call_next)
+    except ZeroDivisionError:
+        # Zero-norm update: nothing to clip, but don't crash the client
+        print("WARNING: LocalDpMod: zero-norm update encountered, skipping DP for this round.")
+        return call_next(msg, ctx)
+    except Exception as e:
+        print(f"ERROR: LocalDpMod: Unknown error: {e}, skipping DP for this round.")
+        return call_next(msg, ctx)
+
+
 # Create the ClientApp instance for `flwr run`
 app = ClientApp(
     client_fn=client_fn,
-    mods=[secaggplus_mod],
+    mods=[conditional_secaggplus_mod, conditional_dp_mod],
 )
 
 
@@ -428,10 +493,3 @@ if __name__ == "__main__":
         server_address="127.0.0.1:5006",
         client=flower_client,
     )
-
-# # Create an instance of the mod with the required params
-# local_dp_obj = LocalDpMod(
-#     0.8, 0.2, 0.001, 0.001
-# )
-
-

@@ -26,7 +26,7 @@ clientapp = "ExternalIO.client_spdz_mtd:app"
 
 [tool.flwr.app.config]
 # Server configuration
-num-server-rounds = 25
+num-server-rounds = 5
 fraction-fit = 0.6
 fraction-evaluate = 0.5
 min-fit-clients = 3
@@ -38,9 +38,17 @@ use-spdz = true
 rl-algo = "eupg"  # Options: "ppo", "a2c", "envelope", "eupg"
 
 # Parameters for SecAgg+ protocol (if enabled)
+use-secagg = false
 num-shares = 3
 reconstruction-threshold = 2
 max-weight = 9000
+
+# Parameters for DP (if enabled)
+use-dp = false
+dp-clip = 1.0
+dp-sens = 1.0
+dp-eps = 0.8
+dp-del = 0.05
 
 [tool.flwr.federations]
 default = "local-simulation"

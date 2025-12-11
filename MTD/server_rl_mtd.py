@@ -123,7 +123,7 @@ PROGRAM_MAPPING = {
     "eupg": "fedavg_eupg"
 }
 
-def main():
+def main_old_api():
     if len(sys.argv) < 3:
         print("Usage: python server_rl_mtd.py <use_spdz> <algorithm>")
         sys.exit(1)
@@ -154,7 +154,7 @@ def main():
             evaluate_metrics_aggregation_fn=weighted_average,
             fit_metrics_aggregation_fn=weighted_average_with_time_logging,
         )
-    config = ServerConfig(num_rounds=3, round_timeout=None)
+    config = ServerConfig(num_rounds=25, round_timeout=None)
 
     start_server(
         server_address="0.0.0.0:5006",
@@ -163,8 +163,7 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
-
+    main_old_api()
 
 
 ## Comment-out the following code block ###
@@ -180,14 +179,14 @@ def main(driver: Driver, context: Context) -> None:
         strategy=get_server_strategy(context.run_config),
     )
 
-    fit_workflow = SecAggPlusWorkflow(
-        num_shares=context.run_config["num-shares"],
-        reconstruction_threshold=context.run_config["reconstruction-threshold"],
-        max_weight=context.run_config["max-weight"],
-    )
-
-    # Create the workflow
-    workflow = DefaultWorkflow(fit_workflow=fit_workflow)
+    workflow = DefaultWorkflow()
+    if context.run_config.get("use-secagg", False) is True:
+        fit_workflow = SecAggPlusWorkflow(
+            num_shares=context.run_config["num-shares"],
+            reconstruction_threshold=context.run_config["reconstruction-threshold"],
+            max_weight=context.run_config["max-weight"],
+        )
+        workflow = DefaultWorkflow(fit_workflow=fit_workflow)
 
     # Execute
     workflow(driver, context)
