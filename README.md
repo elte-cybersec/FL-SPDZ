@@ -123,3 +123,7 @@ When changing the number of clients or parties, make sure to update the followin
 - `party-i.py` — Update party ID and total number of parties.
 - `server.py` — Update the total number of parties and minimum clients.
 - `client-i.py` — Update client ID.
+
+## Running MTD Experiments 🛡️
+
+If you want to run the MTD framework as the task for FL-SPDZ, please refer to the internal README file outlined in the **MTD** folder of this repository. For these runs, in addition to using MP-SPDZ, you can also run MTD experiments using Differential Privacy or Secure Aggregation (specificallly SecAgg+).
